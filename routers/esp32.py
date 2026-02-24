@@ -1,20 +1,13 @@
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-import httpx
 import logging
-import os
 
 logger = logging.getLogger("esp32")
 
 router = APIRouter(prefix="/esp32", tags=["ESP32"])
 
-# ── ESP32 IP / ngrok URL ──────────────────────────────────────────────────────
-# Load from environment variable ESP32_URL, default to actual device IP
-ESP32_URL = os.getenv("ESP32_URL")
-logger.info("ESP32_URL initialized to: %s", ESP32_URL)
-
-# ── Relay state tracking ──────────────────────────────────────────────────────
-relay_states: dict[str, bool] = {
+# In-memory relay state (can be moved to MongoDB later)
+relay_states = {
     "relay1": False,
     "relay2": False,
     "relay3": False,
@@ -23,141 +16,85 @@ relay_states: dict[str, bool] = {
 RELAY_LABELS = {1: "Light", 2: "Water Tank", 3: "Fan"}
 
 
-# ── Pydantic models ───────────────────────────────────────────────────────────
-class UpdateUrlRequest(BaseModel):
-    url: str
+class RelayCommand(BaseModel):
+    relay: int
+    action: str
 
 
-class RelayStatusResponse(BaseModel):
-    relay1: bool
-    relay2: bool
-    relay3: bool
-    labels: dict[str, str]
-
-
-# ── Helper ────────────────────────────────────────────────────────────────────
-async def send_to_esp32(path: str) -> tuple[bool, str]:
-    """Send request to ESP32 device and return (success, message).
-
-    Try GET first (most firmwares use GET), but if the device responds with
-    a non-200 status or times out, attempt POST as a fallback. Log both
-    attempts for debugging.
+# 🔹 ESP32 polls this endpoint every 3 seconds
+@router.get("/status")
+async def esp32_status():
     """
-    url = f"{ESP32_URL}{path}"
-    async with httpx.AsyncClient(timeout=6.0) as client:
-        # Attempt GET
-        try:
-            resp = await client.get(url)
-            body = resp.text
-            logger.info("ESP32 GET %s -> %s %s", url, resp.status_code, resp.reason_phrase)
-            logger.debug("ESP32 GET response body: %s", body)
-            if resp.status_code == 200:
-                return True, body
-        except httpx.RequestError as e:
-            logger.warning("ESP32 GET request failed %s: %s", url, str(e))
-
-        # Fallback to POST
-        try:
-            resp = await client.post(url)
-            body = resp.text
-            logger.info("ESP32 POST %s -> %s %s", url, resp.status_code, resp.reason_phrase)
-            logger.debug("ESP32 POST response body: %s", body)
-            if resp.status_code == 200:
-                return True, body
-            return False, f"POST {resp.status_code} {resp.reason_phrase}: {body}"
-        except httpx.RequestError as e:
-            logger.error("ESP32 POST request failed %s: %s", url, str(e))
-            return False, str(e)
+    Return current relay states for ESP32 to poll.
+    ESP32 GET /api/esp32/status → applies state to GPIO pins.
+    """
+    return relay_states
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
-@router.get("/status", response_model=RelayStatusResponse)
-async def get_status():
+# 🔹 Mobile app calls this to control relays
+@router.post("/relay")
+async def set_relay(cmd: RelayCommand):
+    """
+    Control relay via JSON request: { "relay": 1, "action": "on" }
+    Mobile app → Backend (updates state)
+    Backend → ESP32 polls and applies changes
+    """
+    if cmd.relay not in (1, 2, 3):
+        raise HTTPException(400, "Invalid relay number")
+
+    if cmd.action not in ("on", "off"):
+        raise HTTPException(400, "Invalid action")
+
+    # Update state
+    relay_states[f"relay{cmd.relay}"] = cmd.action == "on"
+    
+    logger.info("Relay %d set to %s", cmd.relay, cmd.action)
+
     return {
-        "relay1": relay_states["relay1"],
-        "relay2": relay_states["relay2"],
-        "relay3": relay_states["relay3"],
-        "labels": {
-            "relay1": "Light",
-            "relay2": "Water Tank",
-            "relay3": "Fan",
-        },
+        "success": True,
+        "relay": cmd.relay,
+        "state": cmd.action,
+        "label": RELAY_LABELS[cmd.relay],
     }
 
 
+# Alternative: path-based control
 @router.post("/relay/{relay_num}/{action}")
-async def control_relay(relay_num: int = Path(..., ge=1, le=3, description="Relay number (1–3)"), action: str = Path(..., description="'on' or 'off'")):
-    relay_key = f"relay{relay_num}"
-    path = f"/relay{relay_num}/{action}"
-
-    # validate action explicitly to avoid Path-level validation mismatches
+async def control_relay_path(relay_num: int, action: str):
+    """Alternative path-based control: POST /api/esp32/relay/1/on"""
+    if relay_num not in (1, 2, 3):
+        raise HTTPException(400, "Invalid relay number")
     if action not in ("on", "off"):
-        raise HTTPException(status_code=400, detail="action must be 'on' or 'off'")
+        raise HTTPException(400, "Invalid action")
 
-    success, message = await send_to_esp32(path)
+    relay_states[f"relay{relay_num}"] = action == "on"
+    
+    logger.info("Relay %d set to %s (path-based)", relay_num, action)
 
-    if not success:
-        raise HTTPException(status_code=502, detail=f"Failed to reach ESP32: {message}")
+    return {
+        "success": True,
+        "relay": relay_num,
+        "state": action,
+        "label": RELAY_LABELS[relay_num],
+    }
 
-    relay_states[relay_key] = action == "on"
-    return {"success": True, "relay": relay_num, "state": action, "label": RELAY_LABELS[relay_num]}
 
-
+# Control all relays at once
 @router.post("/all/{action}")
-async def control_all(action: str = Path(..., description="'on' or 'off'")):
-    # validate action explicitly to avoid Path-level validation mismatches
+async def control_all(action: str):
+    """Control all relays: POST /api/esp32/all/on"""
     if action not in ("on", "off"):
-        raise HTTPException(status_code=400, detail="action must be 'on' or 'off'")
+        raise HTTPException(400, "Invalid action")
 
     results = []
     for relay_num in [1, 2, 3]:
-        path = f"/relay{relay_num}/{action}"
-        success, message = await send_to_esp32(path)
-        relay_key = f"relay{relay_num}"
-        if success:
-            relay_states[relay_key] = action == "on"
+        relay_states[f"relay{relay_num}"] = action == "on"
+        
         results.append({
             "relay": relay_num,
             "label": RELAY_LABELS[relay_num],
-            "success": success,
-            "message": message,
+            "state": action,
         })
 
+    logger.info("All relays set to %s", action)
     return {"action": action, "results": results}
-
-
-@router.get("/health")
-async def health_check():
-    """Check if the backend can reach the ESP32 device.
-    
-    Returns the current ESP32_URL and connection status.
-    Use this to diagnose why relay control is failing.
-    """
-    url = f"{ESP32_URL}/"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(url)
-            logger.info("ESP32 health check %s -> %s", url, resp.status_code)
-            return {
-                "esp32_url": ESP32_URL,
-                "reachable": resp.status_code == 200,
-                "status_code": resp.status_code,
-                "reason": resp.reason_phrase,
-                "message": "ESP32 is reachable and responding" if resp.status_code == 200 else "ESP32 responded but with non-200 status"
-            }
-    except httpx.RequestError as e:
-        logger.error("ESP32 health check failed %s: %s", url, str(e))
-        return {
-            "esp32_url": ESP32_URL,
-            "reachable": False,
-            "error": str(e),
-            "message": "Cannot reach ESP32. Check IP address, network connectivity, and that the device is powered on."
-        }
-
-
-@router.post("/update-url")
-async def update_esp32_url(body: UpdateUrlRequest):
-    global ESP32_URL
-    ESP32_URL = body.url.rstrip("/")
-    logger.info("ESP32 URL updated to %s", ESP32_URL)
-    return {"success": True, "url": ESP32_URL}

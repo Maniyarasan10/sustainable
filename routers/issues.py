@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from utils.nlp_service import analyze_issue_text
 from utils import storage
-from routers.esp32 import send_to_esp32, relay_states
+from routers.esp32 import relay_states
 from db_mongo import devices_col
 from utils import nlp
 
@@ -151,10 +151,11 @@ def create_issue(
                 issues_col.update_one({"_id": issue_id}, {"$set": {"updated_at": datetime.utcnow()}})
                 return
 
-            # attempt to turn on via ESP32
-            success, message = await send_to_esp32(f"/relay{relay_num}/on")
+            # Set relay to on — ESP32 will poll /status and apply change
+            relay_states[relay_key] = True
+            message = f"Relay {relay_num} set to on by system"
+            success = True
             if success:
-                relay_states[relay_key] = True
                 # update issue to reflect auto action
                 issues_col.update_one({"_id": issue_id}, {"$set": {"status": "in_progress", "auto_action": {"action": "turned_on", "by": "system", "relay": relay_num, "message": message, "timestamp": datetime.utcnow()}}})
 
