@@ -1,0 +1,9 @@
+# Auto-generated requirements for the backend. Adjust versions as needed.
+fastapi
+uvicorn[standard]
+pymongo
+python-dotenv
+pydantic
+python-jose
+python-multipart
+transformers
