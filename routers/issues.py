@@ -7,6 +7,7 @@ from datetime import datetime
 import uuid
 from pathlib import Path
 from utils.nlp_service import analyze_issue_text
+from utils import storage
 from routers.esp32 import send_to_esp32, relay_states
 from db_mongo import devices_col
 from utils import nlp
@@ -83,14 +84,22 @@ def create_issue(
     media_url = None
     media_type = None
     if file:
-        uploads_dir = Path('static/uploads')
-        uploads_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{issue_id}_{file.filename}"
-        save_path = uploads_dir / filename
-        with save_path.open('wb') as buffer:
-            buffer.write(file.file.read())
-        media_url = f"/static/uploads/{filename}"
-        media_type = file.content_type
+        # Upload to Cloudinary and store returned secure URL
+        try:
+            resp = storage.upload_file(file, folder='issues', public_id=issue_id)
+            media_url = resp.get('secure_url') or resp.get('url')
+            # Cloudinary reports resource_type (image/video) and content-type may still be available
+            media_type = file.content_type or resp.get('resource_type')
+        except Exception:
+            # Fallback to local saving if Cloudinary is not configured/available
+            uploads_dir = Path('static/uploads')
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"{issue_id}_{file.filename}"
+            save_path = uploads_dir / filename
+            with save_path.open('wb') as buffer:
+                buffer.write(file.file.read())
+            media_url = f"/static/uploads/{filename}"
+            media_type = file.content_type
 
     doc = {
         '_id': issue_id,

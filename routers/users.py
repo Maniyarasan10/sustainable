@@ -3,6 +3,7 @@ from typing import List, Optional
 from utils.auth import get_current_user
 from db_mongo import users_col, issues_col
 from pathlib import Path
+from utils import storage
 import uuid
 import os
 
@@ -40,13 +41,18 @@ def update_me(
 
     # handle uploaded avatar file
     if file:
-        uploads_dir = Path('static/uploads')
-        uploads_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"avatar_{current_user.get('id')}_{file.filename}"
-        save_path = uploads_dir / filename
-        with save_path.open('wb') as buffer:
-            buffer.write(file.file.read())
-        update_fields['avatar'] = f"/static/uploads/{filename}"
+        # Upload avatar to Cloudinary and store URL
+        try:
+            resp = storage.upload_file(file, folder='avatars', public_id=f"avatar_{current_user.get('id')}")
+            update_fields['avatar'] = resp.get('secure_url') or resp.get('url')
+        except Exception:
+            uploads_dir = Path('static/uploads')
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"avatar_{current_user.get('id')}_{file.filename}"
+            save_path = uploads_dir / filename
+            with save_path.open('wb') as buffer:
+                buffer.write(file.file.read())
+            update_fields['avatar'] = f"/static/uploads/{filename}"
 
     if update_fields:
         users_col.update_one({"_id": current_user.get('id')}, {"$set": update_fields})

@@ -7,3 +7,5 @@ pydantic
 python-jose
 python-multipart
 transformers
+
+cloudinary
