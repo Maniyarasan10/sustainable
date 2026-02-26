@@ -14,6 +14,8 @@ from routers import notifications as notifications_router
 from routers import esp32 as esp32_router
 from routers import devices as devices_router
 from fastapi.staticfiles import StaticFiles
+from db_mongo import devices_col
+from schedule_worker import start_schedule_loop
 import os
 from pathlib import Path
 
@@ -41,6 +43,8 @@ app.include_router(users_router.router, prefix="/api")
 app.include_router(leaderboard_router.router, prefix="/api")
 app.include_router(notifications_router.router, prefix="/api")
 app.include_router(esp32_router.router, prefix="/api")
+# Also expose /esp32/* for ESP32 (no /api prefix)
+app.include_router(esp32_router.router)
 app.include_router(devices_router.router, prefix="/api")
 
 # Global Exception Handler to log errors to console
@@ -57,6 +61,12 @@ uploads_dir.mkdir(parents=True, exist_ok=True)
 
 # Serve uploaded media
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+
+# Start background worker: apply device ON/OFF times to relays every minute
+@app.on_event("startup")
+def startup_schedule_worker():
+    start_schedule_loop(esp32_router.relay_states, devices_col, interval_seconds=60)
 
 
 @app.get("/")

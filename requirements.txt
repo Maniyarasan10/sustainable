@@ -6,6 +6,4 @@ python-dotenv
 pydantic
 python-jose
 python-multipart
-transformers
-
 cloudinary

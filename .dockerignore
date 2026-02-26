@@ -1,0 +1,31 @@
+# Git and local env (do not bake secrets into image)
+.git
+.gitignore
+.env
+.env.*
+*.env
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+env
+
+# IDE and OS
+.idea
+.vscode
+*.swp
+.DS_Store
+Thumbs.db
+
+# Docs and tests (optional: remove if you want them in image)
+README.md
+*.md
+tests
+.pytest_cache
+.coverage
+htmlcov

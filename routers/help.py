@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, UploadFile, File, Form
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from utils.auth import get_current_user
 from db_mongo import help_col
 from pathlib import Path
 import uuid
+
+from utils import storage
 
 router = APIRouter(prefix="/help", tags=["Help"])
 
@@ -19,22 +21,29 @@ def create_help(
     file: Optional[UploadFile] = File(None),
     current_user = Depends(get_current_user),
 ):
-    """Create a help request stored in MongoDB; optional media upload saved to static/uploads"""
+    """Create a help request stored in MongoDB; optional media upload with Cloudinary support"""
+    help_id = str(uuid.uuid4())
     media_url = None
     media_type = None
     if file:
-        uploads_dir = Path('static/uploads')
-        uploads_dir.mkdir(parents=True, exist_ok=True)
-        help_id = str(uuid.uuid4())
-        filename = f"{help_id}_{file.filename}"
-        save_path = uploads_dir / filename
-        with save_path.open('wb') as buffer:
-            buffer.write(file.file.read())
-        media_url = f"/static/uploads/{filename}"
-        media_type = file.content_type
+        try:
+            # Upload to Cloudinary
+            resp = storage.upload_file(file, folder='help', public_id=help_id)
+            media_url = resp.get('secure_url') or resp.get('url')
+            media_type = file.content_type or resp.get('resource_type')
+        except Exception:
+            # Fallback to local saving
+            uploads_dir = Path('static/uploads')
+            uploads_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"{help_id}_{file.filename}"
+            save_path = uploads_dir / filename
+            with save_path.open('wb') as buffer:
+                buffer.write(file.file.read())
+            media_url = f"/static/uploads/{filename}"
+            media_type = file.content_type
 
     doc = {
-        "_id": str(uuid.uuid4()),
+        "_id": help_id,
         "user_id": current_user.get('id') if current_user else None,
         "mobile": mobile,
         "description": description,
@@ -43,7 +52,7 @@ def create_help(
         "address": address,
         "media_url": media_url,
         "media_type": media_type,
-        "created_at": datetime.utcnow(),
+        "created_at": datetime.now(timezone.utc),
     }
     help_col.insert_one(doc)
     doc['id'] = doc['_id']

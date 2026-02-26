@@ -69,16 +69,24 @@ class Issue(BaseModel):
     id: str
     user_id: str
     user_name: str
+    user_avatar: Optional[str] = None
+    user_avatar: Optional[str] = None
     title: str
     description: str
     location: Location
     media_url: Optional[str] = None
+    # Backward-compatible camelCase key used by some clients
+    imageUrl: Optional[str] = None
     media_type: Optional[str] = None
     upvotes: int
     downvotes: int
     total_votes: int
     user_vote: Optional[str] = None
     status: IssueStatus
+    is_priority: Optional[bool] = None
+    is_offensive: Optional[bool] = None
+    admin_approved: bool = False
+    offensive: Optional[dict] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 
