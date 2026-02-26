@@ -1,1 +1,21 @@
+# Secrets
 .env
+
+# Local file uploads (use Cloudinary in production)
+static/uploads/
+static/uploads/*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
