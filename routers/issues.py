@@ -421,18 +421,18 @@ def edit_issue(
 
 
 @router.patch("/{issue_id}", response_model=dict)
-def update_issue_status(issue_id: str, new_status: str, current_user: dict = Depends(get_current_user)):
+def update_issue_status(issue_id: str, status: str, current_user: dict = Depends(get_current_user)):
     """Update issue status (e.g., pending -> resolved)"""
     issue = issues_col.find_one({"_id": issue_id})
     if not issue:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Issue not found")
+        raise HTTPException(status_code=404, detail="Issue not found")
     
     # Allow any authenticated user to update status (admin privilege could be checked here)
     valid_statuses = ['open', 'pending', 'in_progress', 'resolved', 'closed', 'solved', 'review', 'verified', 'on_processing']
-    if new_status not in valid_statuses:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid status. Must be one of: {valid_statuses}")
+    if status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
     
-    issues_col.update_one({"_id": issue_id}, {"$set": {"status": new_status, "updated_at": datetime.utcnow()}})
+    issues_col.update_one({"_id": issue_id}, {"$set": {"status": status, "updated_at": datetime.utcnow()}})
     updated_issue = issues_col.find_one({"_id": issue_id})
     # notify owner about status change if actor is not owner
     try:
@@ -444,8 +444,8 @@ def update_issue_status(issue_id: str, new_status: str, current_user: dict = Dep
                 '_id': str(uuid.uuid4()),
                 'user_id': owner_id,
                 'title': 'Issue status updated',
-                'message': f"{actor_name} changed the status of your issue to {new_status}",
-                'metadata': {'issueId': issue_id, 'status': new_status},
+                'message': f"{actor_name} changed the status of your issue to {status}",
+                'metadata': {'issueId': issue_id, 'status': status},
                 'read': False,
                 'created_at': datetime.utcnow()
             }
